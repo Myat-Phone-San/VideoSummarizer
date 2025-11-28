@@ -113,8 +113,10 @@ def summarize_text(transcript_text):
     # Define the User Query
     user_query = f"Please summarize the following video transcript:\n\n---\n\n{transcript_text}"
     
-    # 1. Prepare the content structure
-    contents = [types.Content(parts=[types.Part.from_text(user_query)])]
+    # --- FIX APPLIED HERE ---
+    # The SDK automatically wraps the string into types.Content(parts=[types.Part.from_text(...)])
+    contents = [user_query]
+    # -------------------------
     
     # 2. Prepare the configuration (including system instruction)
     config = types.GenerateContentConfig(
@@ -123,10 +125,9 @@ def summarize_text(transcript_text):
     
     try:
         # 3. Call the SDK's generate_content method
-        # The SDK handles HTTP request, retries, and JSON parsing internally.
         response = client.models.generate_content(
             model=MODEL_NAME,
-            contents=contents,
+            contents=contents, # Now uses the simpler, fixed content definition
             config=config,
         )
         
