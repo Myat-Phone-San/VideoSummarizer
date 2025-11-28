@@ -5,6 +5,7 @@ import time
 import os
 import tempfile
 import sys
+import re
 
 # Import Whisper model loading
 try:
@@ -15,17 +16,16 @@ except ImportError:
 
 
 # --- Configuration ---
-# 1. Load API Key securely from st.secrets (from .streamlit/secrets.toml)
+# 1. Load API Key securely from st.secrets
 try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
 except KeyError:
-    # If the key is not found, we cannot proceed, but we'll let the user know.
     st.error("🚨 API Key Error: Please set 'GEMINI_API_KEY' in your Streamlit secrets file.")
     st.stop()
 
 # Check for placeholder key
-if API_KEY == "YOUR_GEMINI_API_KEY_HERE":
-    st.error("🚨 Configuration Error: The API Key is still set to the placeholder value. Please update it in your Streamlit secrets.")
+if API_KEY == "YOUR_GEMINI_API_KEY_HERE" or not API_KEY:
+    st.error("🚨 Configuration Error: The API Key is still set to the placeholder value or is missing. Please update it in your Streamlit secrets.")
     st.stop()
 
 # 2. Use a stable model name and construct the API URL
@@ -37,15 +37,18 @@ API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}
 def retry_fetch(url, payload, headers, max_retries=3):
     """Fetches API response with exponential backoff."""
     delay = 1
+    response = None
     for attempt in range(max_retries):
         try:
             response = requests.post(url, headers=headers, data=json.dumps(payload))
             response.raise_for_status() # Raise exception for 4xx or 5xx errors
             return response.json()
         except requests.exceptions.RequestException as e:
-            # Check for 400 Bad Request specifically
+            # Check for 400 Bad Request specifically using the response object
             if response is not None and response.status_code == 400:
-                 st.error(f"API Call Failed (400 Bad Request). Possible causes: empty prompt, malformed request, or an issue with the API key or model identifier. Raw response: {response.text}")
+                 error_message = f"API Call Failed (400 Bad Request). Raw response: {response.text}"
+                 st.error(error_message)
+                 # Stop retrying if we hit a known structure error
                  return None
                  
             if attempt < max_retries - 1:
@@ -63,7 +66,6 @@ def load_whisper_model():
     """Load the Whisper model once and cache it for efficiency."""
     st.info("Loading Whisper 'base.en' model... (This initialization happens only once)")
     try:
-        # Load the base.en model which is smaller and faster for English
         return whisper.load_model("base.en")
     except Exception as e:
         st.error(f"Failed to load Whisper model. Error: {e}")
@@ -71,7 +73,7 @@ def load_whisper_model():
         return None
 
 def transcribe_video_with_whisper(uploaded_file):
-    """Transcribes the audio from the uploaded video file using OpenAI Whisper."""
+    """Transcribes the audio from the uploaded video or audio file using OpenAI Whisper."""
     model = load_whisper_model()
     if model is None:
         return None
@@ -79,59 +81,64 @@ def transcribe_video_with_whisper(uploaded_file):
     temp_path = None
     try:
         file_suffix = os.path.splitext(uploaded_file.name)[1]
+        
+        # Ensure the file pointer is at the start before writing
+        uploaded_file.seek(0) 
+        
         with tempfile.NamedTemporaryFile(delete=False, suffix=file_suffix) as tmp_file:
             tmp_file.write(uploaded_file.read())
             temp_path = tmp_file.name
 
         st.markdown(f"Running Whisper on file: **{uploaded_file.name}**...")
         
+        # Whisper requires FFmpeg to extract audio from video/process various audio files
         result = model.transcribe(temp_path, language="en", fp16=False) 
-        # Clean up the transcript (strip leading/trailing whitespace)
+        
+        # Clean up the transcript: strip whitespace 
         transcript = result.get("text", "").strip()
         
-        if not transcript:
-             st.warning("Whisper completed, but the extracted transcript was empty. This may be due to low-volume audio or no discernible speech.")
-             return ""
+        if len(transcript) < 50:
+             st.warning("Whisper completed, but the extracted transcript is very short. This might mean the file had no audible speech.")
+             # Return None if transcript is too short to summarize meaningfully
+             return None 
 
         return transcript
             
     except Exception as e:
-        st.error(f"Whisper Transcription Failed. This is often due to the missing FFmpeg dependency (check packages.txt).")
-        st.error(f"Error Details: {e}")
+        st.error(f"Whisper Transcription Failed. This is typically due to a missing FFmpeg dependency or an unusual file format.")
+        st.exception(e) 
         return None
             
     finally:
+        # Clean up the temporary file regardless of success or failure
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
 
 
 def summarize_text(transcript_text):
     """
-    Summarizes the English transcript using the Gemini AI model.
-    Includes validation for the transcript content.
+    Summarizes the transcript using the Gemini AI model.
+    Uses the corrected payload structure: systemInstruction is top-level.
     """
-    # 1. CRITICAL VALIDATION CHECK
     if not transcript_text or transcript_text.isspace():
-        st.error("Cannot summarize: Transcript content is empty or contains only spaces. Check the Whisper output.")
+        st.error("Cannot summarize: Transcript content is empty or contains only spaces.")
         return "Summarization failed: Empty transcript content."
         
     st.info("Step 2/2: Sending transcript to Gemini AI for summarization...")
     
     system_prompt = (
-        "You are a professional video summarizer. Your task is to analyze the following English video transcript "
-        "and extract the 5 most critical learning points, concepts, or steps discussed. Present the output using clear, concise bullet points."
+        "You are a professional summarizer. Your task is to analyze the following English transcript "
+        "and extract the 5 most critical discussion points, concepts, or decisions. Present the output using clear, concise bullet points."
     )
 
-    user_query = f"Please summarize the following video transcript:\n\n---\n\n{transcript_text}"
+    user_query = f"Please summarize the following transcript:\n\n---\n\n{transcript_text}"
     
-    # CORRECTED PAYLOAD STRUCTURE
+    # CORRECTED PAYLOAD STRUCTURE: systemInstruction is a top-level key.
     payload = {
         "contents": [
             {"role": "user", "parts": [{"text": user_query}]}
         ],
-        "config": {
-            "systemInstruction": system_prompt
-        }
+        "systemInstruction": system_prompt 
     }
     
     headers = {'Content-Type': 'application/json'}
@@ -144,16 +151,16 @@ def summarize_text(transcript_text):
             return summary_text
         except (IndexError, KeyError):
             st.error("Gemini API returned an unexpected response format.")
+            st.json(response_data) 
             return "Summarization failed due to invalid API response format."
             
-    return "Summarization failed. Check the error messages above for connection or request issues."
+    return "Summarization failed. Check the error messages above."
 
 
 # --- Streamlit UI ---
-st.set_page_config(page_title="Real-Time English Video Summarizer", layout="centered")
+st.set_page_config(page_title="Universal Video/Audio Summarizer", layout="centered")
 
-# Custom CSS styling (omitted for brevity, assume it's included as before)
-
+# Custom CSS styling
 st.markdown("""
 <style>
     /* Custom Styling for aesthetics */
@@ -186,14 +193,19 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-st.markdown('<h1 class="main-header">🎙️ Real-Time English Video Summarizer (Whisper + Gemini)</h1>', unsafe_allow_html=True)
-st.warning("⚠️ **Note:** For cloud deployment, the app relies on FFmpeg being installed on the server (e.g., via `packages.txt`).")
-st.write("Upload an English video or audio recording (MP4, MOV, WAV, MP3) to generate a full transcript and a key point summary.")
+st.markdown('<h1 class="main-header">🎙️ Universal Video/Audio Summarizer (Whisper + Gemini)</h1>', unsafe_allow_html=True)
+st.warning("⚠️ **Cloud Deployment Note:** The ability to process all file types relies on the FFmpeg system package being installed on the server (via `packages.txt`).")
+st.write("Upload **any** English video or audio file (MP4, MOV, MP3, WAV, MKV, FLAC, etc.) to generate a full transcript and a key point summary. Perfect for meeting recordings or lecture videos.")
 
-# File Uploader
+# File Uploader - Expanded file types for universality
+ALL_MEDIA_TYPES = [
+    "mp4", "mov", "wav", "mp3", "m4a", "mkv", "avi", "flv", "wmv", 
+    "ogg", "flac", "wma", "aac", "aiff", "webm"
+]
+
 uploaded_file = st.file_uploader(
     "Upload Video or Audio File",
-    type=["mp4", "mov", "wav", "mp3", "m4a"],
+    type=ALL_MEDIA_TYPES,
     accept_multiple_files=False
 )
 
@@ -214,18 +226,19 @@ if uploaded_file is not None:
                     if transcript:
                          st.code(transcript, language="text")
                     else:
-                         st.warning("Transcript is empty or blank.")
+                         st.warning("Transcript is empty or blank. Cannot proceed to summarization.")
 
-
-                # 2. Summarization Step (Only runs if transcript is not None, and validation is inside)
-                summary = summarize_text(transcript)
+                # 2. Summarization Step (Only runs if a valid transcript was returned)
+                if transcript:
+                    summary = summarize_text(transcript)
+                    
+                    st.subheader("✅ Summary (Generated by Gemini)")
+                    st.markdown(summary)
+                    
+                    if not summary.startswith("Summarization failed"):
+                        st.success("Process complete: Transcript generated and Summary extracted.")
+                    else:
+                        st.error("Process failed during summarization. Check error details above.")
                 
-                st.subheader("✅ Summary (Generated by Gemini)")
-                st.markdown(summary)
-                
-                if not summary.startswith("Summarization failed"):
-                    st.success("Process complete: Transcript generated and Summary extracted.")
-                else:
-                    st.error("Process failed during summarization. Check error details above.")
             else:
-                st.error("Cannot proceed to summarization. Transcription failed or returned None.")
+                st.error("Transcription failed. Please ensure the audio quality is clear, the file is valid, and FFmpeg is properly installed on the server.")
