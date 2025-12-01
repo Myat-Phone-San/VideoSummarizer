@@ -22,25 +22,19 @@ except ImportError:
 
 
 # --- Configuration and Client Initialization ---
-# ❗ IMPORTANT: Ensure GEMINI_API_KEY is set in Streamlit secrets
 try:
-    # Attempt to retrieve API Key from Streamlit secrets
     API_KEY = st.secrets["GEMINI_API_KEY"] 
 except KeyError:
     st.error("🚨 API Key Error: Please set 'GEMINI_API_KEY' in your Streamlit secrets file or Streamlit Cloud Secrets.")
     st.stop()
 
 try:
-    # Initialize the Gemini Client globally
     client = genai.Client(api_key=API_KEY)  
 except Exception as e:
     st.error(f"Error initializing AI client. Details: {e}")
     st.stop()
     
-# Model name used for text generation
 MODEL_NAME = "gemini-2.5-flash" 
-
-# Define language codes for Whisper
 LANG_CODE_MY = "my" # ISO code for Burmese/Myanmar
 
 
@@ -49,16 +43,15 @@ LANG_CODE_MY = "my" # ISO code for Burmese/Myanmar
 @st.cache_resource
 def load_whisper_model():
     """
-    Load the Whisper 'base' model once to meet Streamlit Cloud's memory constraints.
+    Load the Whisper 'small' model for better accuracy, while monitoring memory.
     """
-    st.info("Loading Whisper **'base'** model... (This initialization happens only once)")
+    st.info("Loading Whisper **'small'** model for improved accuracy... (Requires ~3GB RAM)")
     try:
-        # Using 'base' (approx. 1GB RAM) for stability.
-        # Set device="cpu" to avoid GPU dependency.
-        return whisper.load_model("base", device="cpu") 
+        # *** CHANGED MODEL TO 'small' ***
+        return whisper.load_model("small", device="cpu") 
     except Exception as e:
         st.error(f"Failed to load Whisper model.")
-        st.error("Error Hint: If you see 'Failed to load model', check PyTorch/Whisper installation and memory limits.")
+        st.error("Error Hint: If the app crashes after this, the 'small' model is too large for Streamlit Cloud's memory limit. You must revert to 'base' or 'small.en'.")
         return None
 
 def transcribe_video_with_whisper(uploaded_file):
@@ -85,6 +78,8 @@ def transcribe_video_with_whisper(uploaded_file):
         start_time = time.time()
         
         # Run Whisper (fp16=False for CPU stability)
+        # Note: If memory issues persist, add language="my" argument to force detection:
+        # result = model.transcribe(temp_path, fp16=False, language="my") 
         result = model.transcribe(temp_path, fp16=False) 
         
         end_time = time.time()
@@ -189,7 +184,7 @@ st.markdown("""
 
 
 st.markdown('<h1 class="main-header">🎙️ Universal Video/Audio Summarizer (Whisper + Gemini SDK)</h1>', unsafe_allow_html=True)
-st.warning("⚠️ **System Note:** Using Whisper **'base'** model for memory compatibility. Burmese transcription accuracy may be lower than with 'large' or 'medium' models.")
+st.warning("⚠️ **System Note:** Upgraded to Whisper **'small'** model for better non-English accuracy. Please check your Streamlit Cloud logs for **Memory Errors** if the app crashes.")
 st.write("Upload **any** English or **Myanmar (Burmese)** video/audio file to generate a full transcript and a key point summary.")
 
 # File Uploader
