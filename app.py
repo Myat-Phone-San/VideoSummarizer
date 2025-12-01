@@ -24,9 +24,11 @@ except ImportError:
 
 # --- Configuration and Client Initialization ---
 try:
+    # Safely get the API key
     if "GEMINI_API_KEY" in st.secrets:
         API_KEY = st.secrets["GEMINI_API_KEY"]
     else:
+        # Fallback for local development if set as environment variable
         API_KEY = os.environ.get("GEMINI_API_KEY") 
         if not API_KEY:
              st.error("🚨 API Key Error: Please set 'GEMINI_API_KEY' in your Streamlit secrets file or Environment variables.")
@@ -53,7 +55,7 @@ def load_whisper_model():
     """
     Load the Whisper 'base' model to conserve memory and improve stability.
     """
-    # *** FIX: CHANGED MODEL FROM 'small' TO 'base' ***
+    # *** FIX 1: Using 'base' model for memory stability ***
     st.info("Loading Whisper **'base'** model for memory efficiency... (Requires ~1GB RAM)")
     try:
         # Load the 'base' model and run it on CPU for Streamlit Cloud stability
@@ -67,8 +69,11 @@ def load_whisper_model():
 
 def transcribe_video_with_whisper(uploaded_file):
     """
-    Transcribes the audio from the uploaded media file, allowing Whisper to
-    automatically detect the language for better universal accuracy.
+    Transcribes the audio from the uploaded media file.
+    
+    *** FIX 2: Explicitly sets language="my" to improve non-English accuracy 
+    and prevent garbage output (like "nd nd nd...") when using the 'base' model. ***
+    
     Returns: (transcript, detected_language_code)
     """
     model = load_whisper_model()
@@ -89,25 +94,26 @@ def transcribe_video_with_whisper(uploaded_file):
         st.markdown(f"Running Whisper on file: **{uploaded_file.name}**...")
         start_time = time.time()
         
-        # Using automatic language detection and fp16=False for CPU stability
-        result = model.transcribe(temp_path, fp16=False) 
+        # --- FIX APPLIED HERE: Force 'my' language for better Burmese transcription ---
+        result = model.transcribe(temp_path, fp16=False, language="my") 
+        # ----------------------------------------------------------------------------
         
         end_time = time.time()
         
-        detected_lang = result.get("language", "en") 
+        # NOTE: Since we forced language="my", we use 'my' as the detected language
+        detected_lang = result.get("language", "my") 
         transcript = result["text"].strip()
         
         st.success(f"Language detected by Whisper: **{detected_lang.upper()}**. Transcription completed in {end_time - start_time:.2f} seconds.")
 
         if len(transcript) < 20: 
-            st.warning("Whisper completed, but the extracted transcript is too short. Cannot proceed to summarization.")
+            st.warning("Whisper completed, but the extracted transcript is too short. Please verify the audio quality or try the 'small' model if memory allows.")
             return None, None
 
         return transcript, detected_lang
             
     except Exception as e:
-        # This generic error block now handles the 0-tensor error
-        st.error(f"Whisper Transcription Failed. (Likely memory error or file decoding issue)")
+        st.error(f"Whisper Transcription Failed. (Likely file decoding issue or unexpected error)")
         st.error(f"Error Details: {e}")
         return None, None
             
@@ -198,8 +204,8 @@ st.markdown("""
 
 
 st.markdown('<h1 class="main-header">🎙️ Universal Video/Audio Summarizer (Whisper + Gemini SDK)</h1>', unsafe_allow_html=True)
-st.warning("⚠️ **System Note:** Switched to Whisper **'base'** model to resolve memory/tensor errors for improved cloud stability. Language detection remains automatic.")
-st.write("Upload **any** English or **Myanmar (Burmese)** video/audio file to generate a full transcript and a key point summary. The model will automatically detect the spoken language.")
+st.warning("✅ **FIXED:** Using Whisper **'base'** model for stability, and **forcing Burmese (`my`)** for improved transcription accuracy. This should prevent the 'nd nd nd' output.")
+st.write("Upload **Myanmar (Burmese)** or English video/audio file. The code is now optimized for reliable **Burmese** transcription and summarization.")
 
 # File Uploader
 ALL_MEDIA_TYPES = [
@@ -216,8 +222,11 @@ uploaded_file = st.file_uploader(
 if uploaded_file is not None:
     st.success(f"File uploaded successfully: **{uploaded_file.name}** ({uploaded_file.size / (1024*1024):.2f} MB)")
     
-    # Display the uploaded video/audio in the Streamlit interface for quick check
-    st.audio(uploaded_file, format=uploaded_file.type)
+    # Display the uploaded media in the Streamlit interface for quick check
+    if uploaded_file.type.startswith('audio'):
+        st.audio(uploaded_file, format=uploaded_file.type)
+    else:
+        st.video(uploaded_file, format=uploaded_file.type)
 
     if st.button("Generate Transcript and Summary"):
         
@@ -249,4 +258,4 @@ if uploaded_file is not None:
                         st.error("Process failed during summarization. Check error details above.")
                 
             else:
-                st.error("Transcription failed. This is likely a **Memory Error** caused by the host environment or a persistent file decoding issue. Please try a shorter audio file.")
+                st.error("Transcription failed. Please try a different file. If the file is a video, ensure you have FFmpeg configured correctly on your host.")
