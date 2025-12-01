@@ -39,6 +39,7 @@ except Exception:
     st.stop()
 
 try:
+    # IMPORTANT: Ensure you have replaced the LEAKED API_KEY with a NEW one
     client = genai.Client(api_key=API_KEY)  
 except Exception as e:
     st.error(f"Error initializing AI client. Details: {e}")
@@ -53,26 +54,24 @@ LANG_CODE_MY = "my" # ISO code for Burmese/Myanmar
 @st.cache_resource(max_entries=1) # Ensure the model is loaded only once
 def load_whisper_model():
     """
-    Load the Whisper 'base' model to conserve memory and improve stability.
+    Load the Whisper 'small' model for best Burmese transcription accuracy.
     """
-    # *** FIX 1: Using 'base' model for memory stability ***
-    st.info("Loading Whisper **'base'** model for memory efficiency... (Requires ~1GB RAM)")
+    # *** FIX: REVERTED TO 'small' FOR BETTER BURMESE ACCURACY ***
+    st.info("Loading Whisper **'small'** model for better **Burmese accuracy**... (Requires ~3GB RAM)")
     try:
-        # Load the 'base' model and run it on CPU for Streamlit Cloud stability
-        model = whisper.load_model("base", device="cpu") 
+        model = whisper.load_model("small", device="cpu") 
         st.success("Whisper model loaded successfully.")
         return model
     except Exception as e:
         st.error(f"Failed to load Whisper model: {e}")
-        st.error("Error Hint: If the app crashes after this, the 'base' model might still be too large for your environment's memory limit. Try 'tiny'.")
+        st.error("⚠️ Memory Error Hint: The 'small' model is too large. You must revert to 'base' or try a shorter audio file.")
         return None
 
 def transcribe_video_with_whisper(uploaded_file):
     """
     Transcribes the audio from the uploaded media file.
     
-    *** FIX 2: Explicitly sets language="my" to improve non-English accuracy 
-    and prevent garbage output (like "nd nd nd...") when using the 'base' model. ***
+    Uses language="my" and the 'small' model for optimal Burmese transcription.
     
     Returns: (transcript, detected_language_code)
     """
@@ -94,20 +93,18 @@ def transcribe_video_with_whisper(uploaded_file):
         st.markdown(f"Running Whisper on file: **{uploaded_file.name}**...")
         start_time = time.time()
         
-        # --- FIX APPLIED HERE: Force 'my' language for better Burmese transcription ---
+        # Force 'my' language for best Burmese transcription with the 'small' model
         result = model.transcribe(temp_path, fp16=False, language="my") 
-        # ----------------------------------------------------------------------------
         
         end_time = time.time()
         
-        # NOTE: Since we forced language="my", we use 'my' as the detected language
         detected_lang = result.get("language", "my") 
         transcript = result["text"].strip()
         
         st.success(f"Language detected by Whisper: **{detected_lang.upper()}**. Transcription completed in {end_time - start_time:.2f} seconds.")
 
         if len(transcript) < 20: 
-            st.warning("Whisper completed, but the extracted transcript is too short. Please verify the audio quality or try the 'small' model if memory allows.")
+            st.warning("Whisper completed, but the extracted transcript is too short. Please verify the audio quality or try a different file.")
             return None, None
 
         return transcript, detected_lang
@@ -204,8 +201,8 @@ st.markdown("""
 
 
 st.markdown('<h1 class="main-header">🎙️ Universal Video/Audio Summarizer (Whisper + Gemini SDK)</h1>', unsafe_allow_html=True)
-st.warning("✅ **FIXED:** Using Whisper **'base'** model for stability, and **forcing Burmese (`my`)** for improved transcription accuracy. This should prevent the 'nd nd nd' output.")
-st.write("Upload **Myanmar (Burmese)** or English video/audio file. The code is now optimized for reliable **Burmese** transcription and summarization.")
+st.warning("⚠️ **ACTION REQUIRED:** Your previous **Gemini API Key is leaked** and is now blocked. **You MUST replace the API Key** with a new one in your Streamlit secrets file.")
+st.write("✅ **Code Fix Applied:** Reverted to Whisper **'small'** model with forced Burmese (`my`) for best possible transcription accuracy.")
 
 # File Uploader
 ALL_MEDIA_TYPES = [
@@ -255,7 +252,8 @@ if uploaded_file is not None:
                         st.balloons()
                         st.success("Process complete: Transcript generated and Summary extracted.")
                     else:
+                        # This will show the new API key error if not replaced
                         st.error("Process failed during summarization. Check error details above.")
                 
             else:
-                st.error("Transcription failed. Please try a different file. If the file is a video, ensure you have FFmpeg configured correctly on your host.")
+                st.error("Transcription failed. If you see 'nd nd nd' with the 'small' model, the audio quality may be too low for the model to process.")
