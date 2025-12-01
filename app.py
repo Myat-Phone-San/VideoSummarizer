@@ -24,11 +24,9 @@ except ImportError:
 
 # --- Configuration and Client Initialization ---
 try:
-    # Safely get the API key
     if "GEMINI_API_KEY" in st.secrets:
         API_KEY = st.secrets["GEMINI_API_KEY"]
     else:
-        # Fallback for local development if set as environment variable
         API_KEY = os.environ.get("GEMINI_API_KEY") 
         if not API_KEY:
              st.error("🚨 API Key Error: Please set 'GEMINI_API_KEY' in your Streamlit secrets file or Environment variables.")
@@ -53,19 +51,19 @@ LANG_CODE_MY = "my" # ISO code for Burmese/Myanmar
 @st.cache_resource(max_entries=1) # Ensure the model is loaded only once
 def load_whisper_model():
     """
-    Load the Whisper 'small' model.
+    Load the Whisper 'base' model to conserve memory and improve stability.
     """
-    with st.spinner("Loading Whisper **'small'** model for improved accuracy... (Requires ~3GB RAM)"):
-        try:
-            # Load the 'small' model and run it on CPU for Streamlit Cloud stability
-            # 'fp16=False' will be used in the transcribe call for CPU stability
-            model = whisper.load_model("small", device="cpu") 
-            st.success("Whisper model loaded successfully.")
-            return model
-        except Exception as e:
-            st.error(f"Failed to load Whisper model: {e}")
-            st.error("Error Hint: If the app crashes after this, the 'small' model might be too large for your environment's memory limit. Try changing 'small' to 'base' or 'small.en'.")
-            return None
+    # *** FIX: CHANGED MODEL FROM 'small' TO 'base' ***
+    st.info("Loading Whisper **'base'** model for memory efficiency... (Requires ~1GB RAM)")
+    try:
+        # Load the 'base' model and run it on CPU for Streamlit Cloud stability
+        model = whisper.load_model("base", device="cpu") 
+        st.success("Whisper model loaded successfully.")
+        return model
+    except Exception as e:
+        st.error(f"Failed to load Whisper model: {e}")
+        st.error("Error Hint: If the app crashes after this, the 'base' model might still be too large for your environment's memory limit. Try 'tiny'.")
+        return None
 
 def transcribe_video_with_whisper(uploaded_file):
     """
@@ -84,7 +82,6 @@ def transcribe_video_with_whisper(uploaded_file):
         uploaded_file.seek(0)
         
         with tempfile.NamedTemporaryFile(delete=False, suffix=file_suffix) as tmp_file:
-            # Read the file content and write it
             tmp_file.write(uploaded_file.read())
             temp_path = tmp_file.name
 
@@ -92,11 +89,8 @@ def transcribe_video_with_whisper(uploaded_file):
         st.markdown(f"Running Whisper on file: **{uploaded_file.name}**...")
         start_time = time.time()
         
-        # --- FIX APPLIED HERE ---
-        # Removing the hardcoded 'language="my"' to allow Whisper's natural language detection.
-        # Forcing fp16=False for stability on CPU.
+        # Using automatic language detection and fp16=False for CPU stability
         result = model.transcribe(temp_path, fp16=False) 
-        # --- END FIX ---
         
         end_time = time.time()
         
@@ -105,15 +99,15 @@ def transcribe_video_with_whisper(uploaded_file):
         
         st.success(f"Language detected by Whisper: **{detected_lang.upper()}**. Transcription completed in {end_time - start_time:.2f} seconds.")
 
-        if len(transcript) < 20: # Slightly lower threshold than before
+        if len(transcript) < 20: 
             st.warning("Whisper completed, but the extracted transcript is too short. Cannot proceed to summarization.")
             return None, None
 
         return transcript, detected_lang
             
     except Exception as e:
-        # The original error handling for the complex error
-        st.error(f"Whisper Transcription Failed. (Check FFmpeg installation and file integrity)")
+        # This generic error block now handles the 0-tensor error
+        st.error(f"Whisper Transcription Failed. (Likely memory error or file decoding issue)")
         st.error(f"Error Details: {e}")
         return None, None
             
@@ -204,7 +198,7 @@ st.markdown("""
 
 
 st.markdown('<h1 class="main-header">🎙️ Universal Video/Audio Summarizer (Whisper + Gemini SDK)</h1>', unsafe_allow_html=True)
-st.warning("⚠️ **System Note:** Using Whisper **'small'** model which now **auto-detects language** for universal accuracy. Check Streamlit Cloud logs for **Memory Errors**.")
+st.warning("⚠️ **System Note:** Switched to Whisper **'base'** model to resolve memory/tensor errors for improved cloud stability. Language detection remains automatic.")
 st.write("Upload **any** English or **Myanmar (Burmese)** video/audio file to generate a full transcript and a key point summary. The model will automatically detect the spoken language.")
 
 # File Uploader
@@ -220,11 +214,10 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file is not None:
-    # Adding a visual confirmation of the file
     st.success(f"File uploaded successfully: **{uploaded_file.name}** ({uploaded_file.size / (1024*1024):.2f} MB)")
     
     # Display the uploaded video/audio in the Streamlit interface for quick check
-    st.video(uploaded_file, format=uploaded_file.type)
+    st.audio(uploaded_file, format=uploaded_file.type)
 
     if st.button("Generate Transcript and Summary"):
         
@@ -256,4 +249,4 @@ if uploaded_file is not None:
                         st.error("Process failed during summarization. Check error details above.")
                 
             else:
-                st.error("Transcription failed. Please try a different file. Check the error message above for details (likely related to file format/corruption or memory limits).")
+                st.error("Transcription failed. This is likely a **Memory Error** caused by the host environment or a persistent file decoding issue. Please try a shorter audio file.")
