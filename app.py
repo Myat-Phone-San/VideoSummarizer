@@ -80,7 +80,7 @@ def transcribe_video_with_whisper(uploaded_file):
         # Run Whisper (fp16=False for CPU stability)
         # Note: If memory issues persist, add language="my" argument to force detection:
         # result = model.transcribe(temp_path, fp16=False, language="my") 
-        result = model.transcribe(temp_path, fp16=False, language="my") 
+        result = model.transcribe(temp_path, fp16=False) 
         
         end_time = time.time()
         
