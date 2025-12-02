@@ -3,3 +3,4 @@ google-genai
 openai-whisper
 pydantic
 ffmpeg-python
+python-docx
