@@ -319,7 +319,7 @@ elif input_method == "Upload Transcript File (.txt, .md, .pdf, .docx)":
                 else:
                     st.error("Cannot read PDF. Please install the 'pypdf' library (`pip install pypdf`).")
                     st.session_state.processing_complete = False
-                    return
+                    st.stop() # Corrected: Replaced return with st.stop()
             
             elif file_extension == '.docx':
                 # DOCX file handling
@@ -334,7 +334,7 @@ elif input_method == "Upload Transcript File (.txt, .md, .pdf, .docx)":
                 else:
                     st.error("Cannot read DOCX. Please install the 'python-docx' library (`pip install python-docx`).")
                     st.session_state.processing_complete = False
-                    return
+                    st.stop() # Corrected: Replaced return with st.stop()
 
             # Common processing for all file types
             if transcript_content.strip():
