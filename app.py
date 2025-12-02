@@ -21,6 +21,20 @@ except ImportError:
     st.error("The 'openai-whisper' library is not installed. Please install it using 'pip install openai-whisper'.")
     st.stop()
 
+# --- Optional Transcript Parsing Library Imports ---
+# These are required for PDF and DOCX support.
+try:
+    import pypdf
+except ImportError:
+    st.info("Optional: Install 'pypdf' (`pip install pypdf`) for PDF transcript support.")
+    pypdf = None
+
+try:
+    import docx
+except ImportError:
+    st.info("Optional: Install 'python-docx' (`pip install python-docx`) for Word transcript support.")
+    docx = None
+
 
 # --- Configuration and Client Initialization ---
 try:
@@ -224,7 +238,7 @@ st.write("This tool uses Whisper for media transcription and Gemini for multi-li
 # --- Input Method Selection ---
 input_method = st.radio(
     "Select Input Method (ထည့်သွင်းမှုပုံစံကို ရွေးပါ):",
-    ("Upload Media (Audio/Video)", "Upload Transcript File (.txt, .md)", "Paste Text Directly"),
+    ("Upload Media (Audio/Video)", "Upload Transcript File (.txt, .md, .pdf, .docx)", "Paste Text Directly"),
     index=0
 )
 
@@ -275,23 +289,63 @@ if input_method == "Upload Media (Audio/Video)":
                 else:
                     st.session_state.processing_complete = False
 
-elif input_method == "Upload Transcript File (.txt, .md)":
+elif input_method == "Upload Transcript File (.txt, .md, .pdf, .docx)":
     
     uploaded_transcript_file = st.file_uploader(
-        "Upload Transcript File (.txt, .md) (စာသားဖိုင် တင်ပါ)",
-        type=['txt', 'md'],
+        "Upload Transcript File (.txt, .md, .pdf, .docx) (စာသားဖိုင် တင်ပါ)",
+        type=['txt', 'md', 'pdf', 'docx'],
         accept_multiple_files=False
     )
     
     if uploaded_transcript_file is not None:
         try:
-            # Read file content as string
-            transcript_content = uploaded_transcript_file.read().decode("utf-8")
-            st.session_state.transcript = transcript_content
-            # Assume language is Burmese or English for transcription context if not specified
-            st.session_state.detected_lang = "manual/unknown" 
-            st.session_state.processing_complete = True
-            st.success(f"Transcript file '{uploaded_transcript_file.name}' loaded successfully.")
+            file_extension = os.path.splitext(uploaded_transcript_file.name)[1].lower()
+            transcript_content = ""
+            
+            if file_extension in ['.txt', '.md']:
+                # Standard text files
+                transcript_content = uploaded_transcript_file.read().decode("utf-8")
+                
+            elif file_extension == '.pdf':
+                # PDF file handling
+                if pypdf:
+                    # Need to read the file content into an in-memory buffer for pypdf
+                    uploaded_transcript_file.seek(0)
+                    reader = pypdf.PdfReader(uploaded_transcript_file)
+                    for page in reader.pages:
+                        transcript_content += page.extract_text() or ""
+                    if not transcript_content:
+                        st.warning("Could not extract text from PDF. The file may contain images only or be encrypted.")
+                else:
+                    st.error("Cannot read PDF. Please install the 'pypdf' library (`pip install pypdf`).")
+                    st.session_state.processing_complete = False
+                    return
+            
+            elif file_extension == '.docx':
+                # DOCX file handling
+                if docx:
+                    # docx.Document requires a file path or file-like object
+                    uploaded_transcript_file.seek(0)
+                    document = docx.Document(uploaded_transcript_file)
+                    paragraphs = [p.text for p in document.paragraphs]
+                    transcript_content = "\n".join(paragraphs)
+                    if not transcript_content:
+                        st.warning("Could not extract text from DOCX. The file may be empty or encrypted.")
+                else:
+                    st.error("Cannot read DOCX. Please install the 'python-docx' library (`pip install python-docx`).")
+                    st.session_state.processing_complete = False
+                    return
+
+            # Common processing for all file types
+            if transcript_content.strip():
+                st.session_state.transcript = transcript_content
+                st.session_state.detected_lang = "manual/unknown" 
+                st.session_state.processing_complete = True
+                st.success(f"Transcript file '{uploaded_transcript_file.name}' loaded successfully.")
+            else:
+                 st.error(f"Transcript file '{uploaded_transcript_file.name}' is empty or text extraction failed.")
+                 st.session_state.processing_complete = False
+
         except Exception as e:
             st.error(f"Error reading transcript file: {e}")
             st.session_state.processing_complete = False
