@@ -82,8 +82,8 @@ if 'last_input_method' not in st.session_state:
 
 @st.cache_resource(max_entries=1) # Ensure the model is loaded only once
 def load_whisper_model():
-    """Load the Whisper 'small' model. Note: 'small' is used for better Burmese accuracy."""
-    st.info("Loading Whisper **'small'** model for improved accuracy... (Requires ~3GB RAM)")
+    """Load the Whisper 'small' model for best Burmese transcription accuracy."""
+    st.info("Loading Whisper **'small'** model for better **Burmese accuracy**... (Requires ~3GB RAM)")
     try:
         # Load the 'small' model and force CPU usage for stability
         model = whisper.load_model("small", device="cpu") 
@@ -97,10 +97,6 @@ def load_whisper_model():
 def transcribe_media_with_whisper(uploaded_file):
     """
     Transcribes the audio from the uploaded media file.
-    
-    CRITICAL FIX: We now explicitly set language="my" to force Burmese transcription,
-    which fixes the gibberish/phonetic transcription issue the user faced.
-    
     Returns: (transcript, detected_language_code)
     """
     model = load_whisper_model()
@@ -121,29 +117,15 @@ def transcribe_media_with_whisper(uploaded_file):
         st.markdown(f"Running Whisper on file: **{uploaded_file.name}**...")
         start_time = time.time()
         
-        # --- FIX FOR BURMESE GIBBERISH ---
-        # We explicitly force the language to Burmese ("my") to prevent phonetic gibberish.
-        # Use a combination of user selection or best guess here. For simplicity and fixing the 
-        # user's specific problem, we'll force 'my' if the user had selected a Burmese option, 
-        # but since we don't have that, we'll offer a choice. 
-        # Since the app is universal, let's offer a dedicated "Burmese Audio" button in the UI. 
-        # For now, let's assume the user wants high-accuracy Burmese if they are using a Burmese-focused app.
-        
-        # Let's revert to a robust auto-detection, but if we suspect a failure, re-run with force 'my'
-        # To directly fix the user's issue, we will hardcode a setting that the user can change:
-        
-        # NOTE: If you know the audio is Burmese, set language="my" here:
-        result = model.transcribe(temp_path, fp16=False, language="my") 
-        # If the audio is English, remove the language="my" parameter.
-        # ---------------------------------
+        # We now let Whisper auto-detect the language for universal use.
+        result = model.transcribe(temp_path, fp16=False) # fp16=False for CPU stability
         
         end_time = time.time()
         
-        # The detected_lang is still taken from the result object, or defaults to my for context
-        detected_lang = result.get("language", LANG_CODE_MY) 
+        detected_lang = result.get("language", LANG_CODE_EN) 
         transcript = result["text"].strip()
         
-        st.success(f"Transcription requested for **MY** (Burmese). Whisper detected language: **{detected_lang.upper()}**. Completed in {end_time - start_time:.2f} seconds.")
+        st.success(f"Language detected by Whisper: **{detected_lang.upper()}**. Transcription completed in {end_time - start_time:.2f} seconds.")
 
         if len(transcript) < 20: 
             st.warning("Whisper completed, but the extracted transcript is too short. Please verify the audio quality or try a different file.")
@@ -152,14 +134,15 @@ def transcribe_media_with_whisper(uploaded_file):
         return transcript, detected_lang
             
     except Exception as e:
-        # Catching the specific errors and providing helpful context.
+        # Catching the specific error from the user's prompt ("cannot reshape tensor of 0 elements")
+        # and providing helpful context.
         error_message = str(e)
         if "cannot reshape tensor of 0 elements" in error_message:
              st.error("Whisper Transcription Failed. 🚫 (File Decoding Error)")
              st.error("This usually means the video file's audio track could not be read or is silent. Try converting the video to a simple `.mp3` or `.wav` file externally and re-uploading.")
         elif "input tensor" in error_message or "output tensor" in error_message:
              st.error("Whisper Transcription Failed. 🚫 (Hardware/Memory Error)")
-             st.error("The 'small' model might be too large for your host machine's memory limits. Consider changing `whisper.load_model('small', device='cpu')` to `whisper.load_model('base', device='cpu')` in the code.")
+             st.error("The 'small' model might be too large for your host machine's memory limits. Consider changing `model = whisper.load_model('small', device='cpu')` to `model = whisper.load_model('base', device='cpu')` in the code.")
         else:
              st.error(f"Whisper Transcription Failed. (Unexpected Error)")
              st.error(f"Error Details: {e}")
@@ -290,7 +273,6 @@ def main():
     """, unsafe_allow_html=True)
 
     st.markdown('<h1 class="main-header">🎙️ Universal Media/Text Summarizer</h1>', unsafe_allow_html=True)
-    st.info("💡 **Burmese Audio Tip:** Transcription is now set to explicitly use the Burmese language for higher accuracy.")
 
     # --- Input Method Selection ---
     input_method = st.radio(
