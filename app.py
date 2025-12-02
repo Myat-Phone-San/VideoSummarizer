@@ -29,7 +29,7 @@ try:
         API_KEY = st.secrets["GEMINI_API_KEY"]
     else:
         # Fallback for local development if set as environment variable
-        API_KEY = os.environ.get("GEMINI_API_KEY") 
+        API_KEY = os.environ.get("GEMINI_API_KEY")
         if not API_KEY:
              st.error("🚨 API Key Error: Please set 'GEMINI_API_KEY' in your Streamlit secrets file or Environment variables.")
              st.stop()
@@ -45,8 +45,19 @@ except Exception as e:
     st.error(f"Error initializing AI client. Details: {e}")
     st.stop()
     
-MODEL_NAME = "gemini-2.5-flash" 
+MODEL_NAME = "gemini-2.5-flash"
 LANG_CODE_MY = "my" # ISO code for Burmese/Myanmar
+LANG_CODE_EN = "en" # ISO code for English
+
+
+# --- Session State Initialization ---
+if 'transcript' not in st.session_state:
+    st.session_state.transcript = ""
+if 'detected_lang' not in st.session_state:
+    # This will be 'my' if transcribed, or assumed 'en' for text input unless user specifies
+    st.session_state.detected_lang = ""
+if 'processing_complete' not in st.session_state:
+    st.session_state.processing_complete = False
 
 
 # --- Utility Functions ---
@@ -56,22 +67,20 @@ def load_whisper_model():
     """
     Load the Whisper 'small' model for best Burmese transcription accuracy.
     """
-    # *** FIX: REVERTED TO 'small' FOR BETTER BURMESE ACCURACY ***
     st.info("Loading Whisper **'small'** model for better **Burmese accuracy**... (Requires ~3GB RAM)")
     try:
+        # Load the 'small' model and force CPU usage to reduce potential GPU memory errors
         model = whisper.load_model("small", device="cpu") 
         st.success("Whisper model loaded successfully.")
         return model
     except Exception as e:
         st.error(f"Failed to load Whisper model: {e}")
-        st.error("⚠️ Memory Error Hint: The 'small' model is too large. You must revert to 'base' or try a shorter audio file.")
+        st.error("⚠️ Memory Error Hint: The 'small' model is too large. You might try reverting to 'base' for smaller environments.")
         return None
 
 def transcribe_video_with_whisper(uploaded_file):
     """
     Transcribes the audio from the uploaded media file.
-    
-    Uses language="my" and the 'small' model for optimal Burmese transcription.
     
     Returns: (transcript, detected_language_code)
     """
@@ -98,7 +107,9 @@ def transcribe_video_with_whisper(uploaded_file):
         
         end_time = time.time()
         
-        detected_lang = result.get("language", "my") 
+        # Whisper still detects the language, but we forced 'my' for transcription.
+        # We'll use 'my' as the assumed source for better context in summarization.
+        detected_lang = result.get("language", LANG_CODE_MY) 
         transcript = result["text"].strip()
         
         st.success(f"Language detected by Whisper: **{detected_lang.upper()}**. Transcription completed in {end_time - start_time:.2f} seconds.")
@@ -123,33 +134,38 @@ def transcribe_video_with_whisper(uploaded_file):
                 st.warning(f"Could not fully remove temporary file: {e}")
 
 
-def summarize_text(transcript_text, detected_lang):
+def summarize_text(transcript_text, target_lang):
     """
-    Summarizes the transcript using the Gemini AI client with language-specific system instructions.
+    Summarizes the transcript using the Gemini AI client, tailored to the target language.
     """
     if not transcript_text or transcript_text.isspace():
         return "Summarization failed: Empty transcript content."
         
-    st.info("Step 2/2: Sending transcript to Gemini AI for summarization...")
+    st.info(f"Sending transcript to Gemini AI for summarization in **{target_lang.upper()}**...")
     
-    # --- Dynamic Prompts ---
-    if detected_lang == LANG_CODE_MY:
-        # Burmese System Instruction 
+    # --- Dynamic Prompts based on Target Language ---
+    
+    # Common core prompt for Gemini
+    core_query = "Please summarize the following text by extracting the 5 most critical learning points, concepts, or steps discussed. Present the result using clear, concise bullet points."
+    
+    if target_lang == LANG_CODE_MY:
+        # Burmese System Instruction (Requesting summary IN Burmese)
         system_instruction = (
-            "သင်သည် ပရော်ဖက်ရှင်နယ် ဗီဒီယို အနှစ်ချုပ်သူ ဖြစ်သည်။ သင်၏တာဝန်မှာ အောက်ပါ မြန်မာဗီဒီယို စာသားကို ခွဲခြမ်းစိတ်ဖြာပြီး ဆွေးနွေးထားသော အရေးကြီးဆုံး သင်ယူမှုအချက် ၅ ချက်၊ အယူအဆ ၅ ချက် သို့မဟုတ် အဆင့် ၅ ဆင့်ကို ထုတ်နုတ်ရန်ဖြစ်သည်။ ရလဒ်ကို ရှင်းလင်းပြတ်သားသော အချက်အလက်စာရင်း (bullet points) များဖြင့် ဖော်ပြပါ။"
+            "သင်သည် ပရော်ဖက်ရှင်နယ် အနှစ်ချုပ်သူ ဖြစ်သည်။ သင်၏တာဝန်မှာ အောက်ပါ စာသားကို ခွဲခြမ်းစိတ်ဖြာပြီး ဆွေးနွေးထားသော အရေးကြီးဆုံး သင်ယူမှုအချက် ၅ ချက်၊ အယူအဆ ၅ ချက် သို့မဟုတ် အဆင့် ၅ ဆင့်ကို မြန်မာဘာသာဖြင့်သာ ထုတ်နုတ်ဖော်ပြရန်ဖြစ်သည်။ ရလဒ်ကို ရှင်းလင်းပြတ်သားသော အချက်အလက်စာရင်း (bullet points) များဖြင့် ဖော်ပြပါ။"
         )
-        user_query = f"ကျေးဇူးပြု၍ အောက်ပါ ဗီဒီယို စာသားကို အကျဉ်းချုပ်ပေးပါ။:\n\n---\n\n{transcript_text}"
+        # Burmese User Query (Providing the core task)
+        user_query = f"{core_query} အောက်ပါ စာသားကို အကျဉ်းချုပ်ပေးပါ။:\n\n---\n\n{transcript_text}"
         
-    else: # Default to English for all other languages, including English itself
-        # English System Instruction 
+    else: # Default to English (LANG_CODE_EN)
+        # English System Instruction (Requesting summary IN English)
         system_instruction = (
-            "You are a professional video summarizer. Your task is to analyze the following video transcript "
-            "and extract the 5 most critical learning points, concepts, or steps discussed. Present the output using clear, concise bullet points."
+            "You are a professional summarizer. Your task is to analyze the following text and extract the 5 most critical learning points, concepts, or steps discussed. Present the output using clear, concise bullet points in English."
         )
-        user_query = f"Please summarize the following video transcript:\n\n---\n\n{transcript_text}"
+        # English User Query
+        user_query = f"{core_query}\n\n---\n\n{transcript_text}"
     
     # --- Gemini API Call Structure ---
-    prompt_contents = [user_query] 
+    prompt_contents = [user_query]
 
     try:
         response = client.models.generate_content(
@@ -165,14 +181,14 @@ def summarize_text(transcript_text, detected_lang):
         
     except GeminiAPIError as e: 
         st.error(f"Gemini API Call Failed (SDK Error): {e}")
-        return "Summarization failed due to API connection error."
+        return "Summarization failed due to API connection error. (Check Console for details)"
     except Exception as e:
         st.error(f"An unexpected error occurred during summarization: {e}")
         return "Summarization failed due to an unexpected error."
 
 
 # --- Streamlit UI ---
-st.set_page_config(page_title="Universal Video/Audio Summarizer (Gemini)", layout="centered")
+st.set_page_config(page_title="Universal Media/Text Summarizer (Gemini)", layout="centered")
 
 st.markdown("""
 <style>
@@ -185,6 +201,7 @@ st.markdown("""
         border-radius: 8px;
         transition: background-color 0.3s;
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        margin: 5px; /* Added margin for side-by-side buttons */
     }
     .stButton>button:hover {
         background-color: #004182;
@@ -199,61 +216,146 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-
-st.markdown('<h1 class="main-header">🎙️ Universal Video/Audio Summarizer (Whisper + Gemini SDK)</h1>', unsafe_allow_html=True)
+st.markdown('<h1 class="main-header">🎙️ Universal Media/Text Summarizer (Whisper + Gemini SDK)</h1>', unsafe_allow_html=True)
 st.warning("⚠️ **ACTION REQUIRED:** Your previous **Gemini API Key is leaked** and is now blocked. **You MUST replace the API Key** with a new one in your Streamlit secrets file.")
-st.write("✅ **Code Fix Applied:** Reverted to Whisper **'small'** model with forced Burmese (`my`) for best possible transcription accuracy.")
+st.write("This tool uses Whisper for media transcription and Gemini for multi-lingual summarization.")
 
-# File Uploader
-ALL_MEDIA_TYPES = [
-    "mp4", "mov", "wav", "mp3", "m4a", "mkv", "avi", "flv", "wmv", 
-    "ogg", "flac", "wma", "aac", "aiff", "webm"
-]
 
-uploaded_file = st.file_uploader(
-    "Upload Video or Audio File",
-    type=ALL_MEDIA_TYPES,
-    accept_multiple_files=False
+# --- Input Method Selection ---
+input_method = st.radio(
+    "Select Input Method (ထည့်သွင်းမှုပုံစံကို ရွေးပါ):",
+    ("Upload Media (Audio/Video)", "Upload Transcript File (.txt, .md)", "Paste Text Directly"),
+    index=0
 )
 
-if uploaded_file is not None:
-    st.success(f"File uploaded successfully: **{uploaded_file.name}** ({uploaded_file.size / (1024*1024):.2f} MB)")
+# Reset state when input method changes
+if st.session_state.get('last_input_method') != input_method:
+    st.session_state.transcript = ""
+    st.session_state.detected_lang = ""
+    st.session_state.processing_complete = False
+    st.session_state.last_input_method = input_method
+    st.rerun()
+
+st.divider()
+
+# --- Conditional Input Handling ---
+
+if input_method == "Upload Media (Audio/Video)":
     
-    # Display the uploaded media in the Streamlit interface for quick check
-    if uploaded_file.type.startswith('audio'):
-        st.audio(uploaded_file, format=uploaded_file.type)
-    else:
-        st.video(uploaded_file, format=uploaded_file.type)
+    # Define acceptable media types
+    ALL_MEDIA_TYPES = [
+        "mp4", "mov", "wav", "mp3", "m4a", "mkv", "avi", "flv", "wmv", 
+        "ogg", "flac", "wma", "aac", "aiff", "webm"
+    ]
 
-    if st.button("Generate Transcript and Summary"):
+    uploaded_file = st.file_uploader(
+        "Upload Video or Audio File (ဗီဒီယို သို့မဟုတ် အသံဖိုင် တင်ပါ)",
+        type=ALL_MEDIA_TYPES,
+        accept_multiple_files=False
+    )
+
+    if uploaded_file is not None:
+        st.success(f"File uploaded successfully: **{uploaded_file.name}** ({uploaded_file.size / (1024*1024):.2f} MB)")
         
-        # 1. Transcription Step
-        with st.spinner("Step 1/2: Generating Transcript using Whisper AI..."):
-            transcript, detected_lang = transcribe_video_with_whisper(uploaded_file)
-            
-            if transcript is not None:
-                st.subheader("📝 Extracted Transcript (ထုတ်ယူထားသော စာသား)")
-                
-                # Show the long transcript in an expander
-                with st.expander(f"Click to view full transcript text (Detected Language: {detected_lang.upper()})"):
-                    if transcript:
-                        st.code(transcript, language="text") 
-                    else:
-                        st.warning("Transcript is empty or blank. Cannot proceed to summarization.")
+        # Display the uploaded media
+        if uploaded_file.type.startswith('audio'):
+            st.audio(uploaded_file, format=uploaded_file.type)
+        else:
+            st.video(uploaded_file, format=uploaded_file.type)
 
-                # 2. Summarization Step (Only runs if a valid transcript was returned)
-                if transcript:
-                    summary = summarize_text(transcript, detected_lang)
-                    
-                    st.subheader("✅ Summary (Generated by Gemini - အနှစ်ချုပ်)")
-                    st.markdown(summary)
-                    
-                    if not summary.startswith("Summarization failed"):
-                        st.balloons()
-                        st.success("Process complete: Transcript generated and Summary extracted.")
-                    else:
-                        # This will show the new API key error if not replaced
-                        st.error("Process failed during summarization. Check error details above.")
+        if st.button("Generate Transcript (စာသားထုတ်ယူရန်)"):
+            # 1. Transcription Step
+            with st.spinner("Step 1/2: Generating Transcript using Whisper AI..."):
+                transcript, detected_lang = transcribe_video_with_whisper(uploaded_file)
                 
-            else:
-                st.error("Transcription failed. If you see 'nd nd nd' with the 'small' model, the audio quality may be too low for the model to process.")
+                if transcript is not None:
+                    st.session_state.transcript = transcript
+                    st.session_state.detected_lang = detected_lang
+                    st.session_state.processing_complete = True
+                else:
+                    st.session_state.processing_complete = False
+
+elif input_method == "Upload Transcript File (.txt, .md)":
+    
+    uploaded_transcript_file = st.file_uploader(
+        "Upload Transcript File (.txt, .md) (စာသားဖိုင် တင်ပါ)",
+        type=['txt', 'md'],
+        accept_multiple_files=False
+    )
+    
+    if uploaded_transcript_file is not None:
+        try:
+            # Read file content as string
+            transcript_content = uploaded_transcript_file.read().decode("utf-8")
+            st.session_state.transcript = transcript_content
+            # Assume language is Burmese or English for transcription context if not specified
+            st.session_state.detected_lang = "manual/unknown" 
+            st.session_state.processing_complete = True
+            st.success(f"Transcript file '{uploaded_transcript_file.name}' loaded successfully.")
+        except Exception as e:
+            st.error(f"Error reading transcript file: {e}")
+            st.session_state.processing_complete = False
+
+
+elif input_method == "Paste Text Directly":
+    
+    pasted_text = st.text_area(
+        "Paste your text/transcript here (စာသားထည့်ပါ)",
+        height=300,
+        placeholder="Paste your video or audio transcript here..."
+    )
+    
+    if st.button("Use Pasted Text (စာသားအသုံးပြုရန်)"):
+        if len(pasted_text.strip()) > 20:
+            st.session_state.transcript = pasted_text.strip()
+            # Assume language is Burmese or English for transcription context if not specified
+            st.session_state.detected_lang = "manual/unknown"
+            st.session_state.processing_complete = True
+            st.success("Text accepted. Ready for summarization.")
+        else:
+            st.error("Please paste at least 20 characters of text.")
+            st.session_state.processing_complete = False
+
+
+# --- Summarization and Output Section ---
+
+if st.session_state.processing_complete:
+    
+    st.divider()
+    st.subheader("📝 Extracted Transcript (ထုတ်ယူထားသော စာသား)")
+    
+    # Show the long transcript in an expander
+    with st.expander(f"Click to view full transcript text (Source: {st.session_state.detected_lang.upper()})"):
+        st.code(st.session_state.transcript, language="text") 
+
+    st.subheader("2. Choose Summarization Language (အနှစ်ချုပ်ဘာသာစကား ရွေးပါ)")
+    
+    col1, col2 = st.columns(2)
+
+    with col1:
+        # Button 1: Summarize in English
+        if st.button("Summarize in English (အင်္ဂလိပ်ဘာသာ)", use_container_width=True):
+            st.subheader("✅ English Summary (Generated by Gemini)")
+            with st.spinner("Generating English Summary..."):
+                summary = summarize_text(st.session_state.transcript, LANG_CODE_EN)
+                st.markdown(summary)
+            if not summary.startswith("Summarization failed"):
+                 st.balloons()
+
+    with col2:
+        # Button 2: Summarize in Burmese
+        if st.button("Summarize in Burmese (မြန်မာဘာသာ)", use_container_width=True):
+            st.subheader("✅ Burmese Summary (Generated by Gemini - မြန်မာအနှစ်ချုပ်)")
+            with st.spinner("Generating Burmese Summary..."):
+                summary = summarize_text(st.session_state.transcript, LANG_CODE_MY)
+                st.markdown(summary)
+            if not summary.startswith("Summarization failed"):
+                 st.balloons()
+                 
+else:
+    if st.session_state.transcript:
+         st.divider()
+         st.info("Transcript loaded. Press one of the summary buttons above.")
+    elif input_method != "Upload Media (Audio/Video)" and not st.session_state.transcript:
+        st.info("Please upload a file or paste text and click the 'Use' button to proceed.")
+    # For media, the button is "Generate Transcript" and already handled.
