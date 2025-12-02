@@ -22,6 +22,7 @@ except ImportError:
     st.stop()
 
 # --- Optional Transcript Parsing Library Imports ---
+# These are required for PDF and DOCX support.
 try:
     import pypdf
     PDF_SUPPORT = True
@@ -116,8 +117,7 @@ def transcribe_media_with_whisper(uploaded_file):
         st.markdown(f"Running Whisper on file: **{uploaded_file.name}**...")
         start_time = time.time()
         
-        # Note: We now let Whisper auto-detect the language for universal use, 
-        # but the system instruction in summarize_text will ensure correct Burmese context.
+        # We now let Whisper auto-detect the language for universal use.
         result = model.transcribe(temp_path, fp16=False) # fp16=False for CPU stability
         
         end_time = time.time()
@@ -136,9 +136,13 @@ def transcribe_media_with_whisper(uploaded_file):
     except Exception as e:
         # Catching the specific error from the user's prompt ("cannot reshape tensor of 0 elements")
         # and providing helpful context.
-        if "cannot reshape tensor of 0 elements" in str(e):
+        error_message = str(e)
+        if "cannot reshape tensor of 0 elements" in error_message:
              st.error("Whisper Transcription Failed. 🚫 (File Decoding Error)")
              st.error("This usually means the video file's audio track could not be read or is silent. Try converting the video to a simple `.mp3` or `.wav` file externally and re-uploading.")
+        elif "input tensor" in error_message or "output tensor" in error_message:
+             st.error("Whisper Transcription Failed. 🚫 (Hardware/Memory Error)")
+             st.error("The 'small' model might be too large for your host machine's memory limits. Consider changing `model = whisper.load_model('small', device='cpu')` to `model = whisper.load_model('base', device='cpu')` in the code.")
         else:
              st.error(f"Whisper Transcription Failed. (Unexpected Error)")
              st.error(f"Error Details: {e}")
@@ -283,7 +287,8 @@ def main():
         st.session_state.detected_lang = ""
         st.session_state.processing_complete = False
         st.session_state.last_input_method = input_method
-        st.experimental_rerun() # Use rerun to clear UI fully
+        # FIX: Replaced st.experimental_rerun() with st.rerun()
+        st.rerun() 
 
     st.divider()
 
